@@ -1,0 +1,11 @@
+torch
+#
+swig
+gymnasium
+gymnasium[classic-control]
+gymnasium[toy-text]
+gymnasium[mujoco]
+gymnasium[atari]
+ale-py
+#
+tqdm
