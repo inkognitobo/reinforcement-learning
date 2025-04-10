@@ -227,60 +227,6 @@ class ClipPPOLoss(torch.nn.Module):
         return loss, stats
 
 
-def update(
-        agent: Agent,
-        batch_observations: torch.Tensor,
-        batch_actions: torch.Tensor,
-        batch_logprobs: torch.Tensor,
-        batch_values: torch.Tensor,
-        batch_advantages: torch.Tensor,
-        batch_returns: torch.Tensor,
-        batch_size: int,
-        minibatch_size: int,
-        num_epochs: int = 4,
-        max_grad_norm: float = 0.5,
-        device: Device = DEVICE,
-) -> torch.Tensor:
-    epoch_losses = torch.zeros((num_epochs,)).to(device=device)
-    for epoch in range(num_epochs):
-        batch_indices = torch.randperm(batch_size)
-        batch_losses = []
-        for start in range(0, batch_size, minibatch_size):
-            end = start + minibatch_size
-            minibatch_indices = batch_indices[start:end]
-
-            _, logprobs_prime, entropies_prime, values_prime = agent.predict(
-                batch_observations[minibatch_indices],
-                batch_actions.long()[minibatch_indices],
-            )
-
-            # Loss
-            loss, stats = loss_fn(
-                logprobs=batch_logprobs[minibatch_indices],
-                values=batch_values[minibatch_indices],
-                advantages=batch_advantages[minibatch_indices],
-                returns=batch_returns[minibatch_indices],
-                new_logprobs=logprobs_prime,
-                new_entropies=entropies_prime,
-                new_values=values_prime,
-            )
-            batch_losses += [loss]
-
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                parameters=agent.parameters(),
-                max_norm=max_grad_norm,
-            )
-            optimizer.step()
-
-        epoch_losses[epoch] = torch.tensor(data=batch_losses).mean()
-
-    avg_epoch_loss = epoch_losses.mean()
-
-    return avg_epoch_loss
-
-
 def evaluate(
         agent: Agent,
         env_id: str,
@@ -338,6 +284,8 @@ if __name__ == "__main__":
     NUM_MINIBATCHES = 4
     MINIBATCH_SIZE = int(BATCH_SIZE // NUM_MINIBATCHES)
     ANNEAL_LR = True
+    NUM_EPOCHS = 4
+    MAX_GRAD_NORM = 0.5
 
     SEED = 50
 
@@ -436,17 +384,45 @@ if __name__ == "__main__":
         batch_returns = returns.reshape(-1)
         batch_values = values.reshape(-1)
 
-        avg_epoch_loss = update(
-            agent=agent,
-            batch_observations=batch_observations,
-            batch_actions=batch_actions,
-            batch_logprobs=batch_logprobs,
-            batch_values=batch_values,
-            batch_advantages=batch_advantages,
-            batch_returns=batch_returns,
-            batch_size=BATCH_SIZE,
-            minibatch_size=MINIBATCH_SIZE,
-        )
+        # Update model
+        epoch_losses = torch.zeros((NUM_EPOCHS,)).to(device=DEVICE)
+        for epoch in range(NUM_EPOCHS):
+            # Shuffle batch indices
+            batch_indices = torch.randperm(BATCH_SIZE)
+            batch_losses = []
+            for start in range(0, BATCH_SIZE, MINIBATCH_SIZE):
+                # Select a minibatch
+                end = start + MINIBATCH_SIZE
+                minibatch_indices = batch_indices[start:end]
+
+                _, logprobs_prime, entropies_prime, values_prime = agent.predict(
+                    batch_observations[minibatch_indices],
+                    batch_actions.long()[minibatch_indices],
+                )
+
+                # Loss
+                loss, stats = loss_fn(
+                    logprobs=batch_logprobs[minibatch_indices],
+                    values=batch_values[minibatch_indices],
+                    advantages=batch_advantages[minibatch_indices],
+                    returns=batch_returns[minibatch_indices],
+                    new_logprobs=logprobs_prime,
+                    new_entropies=entropies_prime,
+                    new_values=values_prime,
+                )
+                batch_losses += [loss]
+
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    parameters=agent.parameters(),
+                    max_norm=MAX_GRAD_NORM,
+                )
+                optimizer.step()
+
+            epoch_losses[epoch] = torch.tensor(data=batch_losses).mean()
+
+        avg_epoch_loss = epoch_losses.mean()
 
         # Evaluation
         stats = evaluate(agent=agent, env_id=env_id)
