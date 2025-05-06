@@ -1,4 +1,8 @@
+import os
+
 import torch
+from torch.utils.tensorboard import SummaryWriter
+
 import random
 import numpy as np
 
@@ -10,11 +14,6 @@ from src.nn.utils import layer_init
 from src.utils import DEVICE
 from src.utils.types import Device
 
-
-# TODO:
-# - [ ] Vectorization (especially useful for MARL: N = num_envs * num_players)
-# - [ ] TD(lambda) return estimation: V_{targ} = est_returns = advantages + values
-# - [ ] Potentially extract MLP code from agent
 
 class Agent(torch.nn.Module):
     def __init__(
@@ -55,8 +54,10 @@ class Agent(torch.nn.Module):
             ),
         )
 
-        self.in_features = in_features
-        self.out_features = out_features
+        # Register tensors as buffers
+        # Available via `self.name` syntax, and saved alongside module's `state_dict`
+        self.register_buffer(name="in_features", tensor=torch.tensor(in_features))
+        self.register_buffer(name="out_features", tensor=torch.tensor(out_features))
 
         self.device = device
         self.to(device=self.device)
@@ -87,6 +88,13 @@ class Agent(torch.nn.Module):
         action, logprob, entropy, value = self.predict(tensor=tensor)
         return value
 
+    @staticmethod
+    def load(f: str) -> "Agent":
+        statedict = torch.load(f=f)
+        agent = Agent(in_features=statedict["in_features"].item(),
+                      out_features=statedict["out_features"].item())
+        return agent
+
 
 class GeneralizedAdvantageEstimation(torch.nn.Module):
     def __init__(
@@ -97,9 +105,9 @@ class GeneralizedAdvantageEstimation(torch.nn.Module):
     ):
         super().__init__()
 
-        # TODO: register buffer for these?
-        self.gae_gamma = gae_gamma
-        self.gae_lambda = gae_lambda
+        # Register tensors as buffers
+        self.register_buffer(name="gae_gamma", tensor=torch.tensor(gae_gamma))
+        self.register_buffer(name="gae_lambda", tensor=torch.tensor(gae_lambda))
 
         self.device = device
         self.to(device=self.device)
@@ -150,14 +158,14 @@ class ClipPPOLoss(torch.nn.Module):
     ):
         super().__init__()
 
-        # TODO: register buffer for these?
-        self.clip_epsilon = clip_epsilon
-        self.clip_value = clip_value
+        # Register tensors as buffers
+        self.register_buffer(name="clip_epsilon", tensor=torch.tensor(clip_epsilon))
+        self.register_buffer(name="clip_value", tensor=torch.tensor(clip_value))
 
-        self.value_coef = value_coef
-        self.entropy_coef = entropy_coef
+        self.register_buffer(name="value_coef", tensor=torch.tensor(value_coef))
+        self.register_buffer(name="entropy_coef", tensor=torch.tensor(entropy_coef))
 
-        self.norm_adv = norm_adv
+        self.register_buffer(name="norm_adv", tensor=torch.tensor(norm_adv))
 
         self.device = device
         self.to(device=self.device)
@@ -184,6 +192,7 @@ class ClipPPOLoss(torch.nn.Module):
             fraction_clipped = ((ratio - 1.0).abs() > self.clip_epsilon).float().mean().item()
 
         # Normalize advantages
+        # Add 1e-8 for numerical stability (avoid risk of divide-by-zero)
         if self.norm_adv:
             mean = advantages.mean()
             std = advantages.std()
@@ -218,6 +227,9 @@ class ClipPPOLoss(torch.nn.Module):
         # Total loss
         loss = pg_loss + self.value_coef * v_loss - self.entropy_coef * entropy_bonus
 
+        # Compute debug stats
+        # Approximate Kullback-Leibler divergence
+        # Fraction of the training data that triggered the clipped objective
         stats = {
             "old_approx_kl": old_approx_kl,
             "approx_kl": approx_kl,
@@ -277,6 +289,16 @@ def evaluate(
 if __name__ == "__main__":
     import gymnasium as gym
 
+    # NOTE: Naming is as if this was single environment:
+    # - single step -> singular in naming ("obs", "action", "reward"), even though
+    # these may be vectors containing entries for each environment
+    # - batch -> plural in naming ("observations", "actions", "rewards")
+
+    EXPERIMENT_NAME = "ppo/0002"
+    os.makedirs(f"models/{EXPERIMENT_NAME}", exist_ok=True)
+    os.makedirs(f"runs/{EXPERIMENT_NAME}", exist_ok=True)
+
+    NUM_ENVS = 5
     TOTAL_TIMESTEPS = 100_000
     LEARNING_RATE = 2.5e-4
     BATCH_SIZE = 128
@@ -287,8 +309,7 @@ if __name__ == "__main__":
     NUM_EPOCHS = 4
     MAX_GRAD_NORM = 0.5
 
-    SEED = 50
-
+    SEED = 24
     if SEED:
         random.seed(SEED)
         np.random.seed(SEED)
@@ -296,11 +317,22 @@ if __name__ == "__main__":
         torch.cuda.manual_seed(SEED)
         torch.backends.cudnn.deterministic = True
 
+    # Write statistics
+    writer = SummaryWriter(f"runs/{EXPERIMENT_NAME}")
+
     # Environment
     env_id = "CartPole-v1"
-    env = gym.make(id=env_id)
-    in_features = env.observation_space.shape[-1]
-    out_features = env.action_space.n
+    envs = gym.vector.SyncVectorEnv(
+        env_fns=[lambda:
+                 gym.wrappers.RecordEpisodeStatistics(gym.make(id=env_id))
+                 for i in range(NUM_ENVS)],
+        autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP,
+    )
+    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action spaces ok"
+    observation_space = envs.single_observation_space
+    action_space = envs.single_action_space
+    in_features = observation_space.shape[-1]
+    out_features = action_space.n
 
     # Agent
     agent = Agent(in_features=in_features, out_features=out_features)
@@ -314,16 +346,17 @@ if __name__ == "__main__":
     loss_fn = ClipPPOLoss()
 
     # Memory
-    observations = torch.zeros((BATCH_SIZE, *env.observation_space.shape)).to(device=DEVICE)
-    actions = torch.zeros((BATCH_SIZE, *env.action_space.shape)).to(device=DEVICE)
-    logprobs = torch.zeros((BATCH_SIZE,)).to(device=DEVICE)
-    rewards = torch.zeros((BATCH_SIZE,)).to(device=DEVICE)
-    dones = torch.zeros((BATCH_SIZE,)).to(device=DEVICE)
-    values = torch.zeros((BATCH_SIZE,)).to(device=DEVICE)
+    # Using shape (BATCH_SIZE, NUM_ENVS, ...,) allows indexing by step
+    observations = torch.zeros((BATCH_SIZE, NUM_ENVS, *observation_space.shape)).to(device=DEVICE)
+    actions = torch.zeros((BATCH_SIZE, NUM_ENVS, *action_space.shape)).to(device=DEVICE)
+    logprobs = torch.zeros((BATCH_SIZE, NUM_ENVS,)).to(device=DEVICE)
+    rewards = torch.zeros((BATCH_SIZE, NUM_ENVS,)).to(device=DEVICE)
+    dones = torch.zeros((BATCH_SIZE, NUM_ENVS,)).to(device=DEVICE)
+    values = torch.zeros((BATCH_SIZE, NUM_ENVS,)).to(device=DEVICE)
 
     # Other
     global_step = 0
-    obs, _ = env.reset()
+    obs, _ = envs.reset(seed=SEED)
     obs = torch.tensor(data=obs).to(device=DEVICE)
     done = torch.zeros((1,)).to(device=DEVICE)
 
@@ -338,31 +371,50 @@ if __name__ == "__main__":
             optimizer.param_groups[0]["lr"] = lrnow
 
         # Collect rollout (fixed-length trajectory segment)
+        # Resetting the environments is taken care off by `VectorEnv`
         for step in range(0, BATCH_SIZE):
-            global_step += 1
+            global_step += NUM_ENVS  # 1 step per environment
             observations[step] = obs
             dones[step] = done
-
-            if done:
-                obs, info = env.reset()
-                obs = torch.tensor(data=obs).to(device=DEVICE)
-                done = torch.zeros((1,)).to(device=DEVICE)
 
             with torch.no_grad():
                 action, logprob, entropy, value = agent.predict(tensor=obs)
             actions[step] = action
             logprobs[step] = logprob
-            values[step] = value
+            values[step] = value.squeeze()
 
-            obs, reward, terminated, truncated, info = env.step(action=action.cpu().numpy())
-            done = torch.tensor(data=terminated or truncated).to(device=DEVICE)
+            obs, reward, terminated, truncated, info = envs.step(actions=action.cpu().numpy())
+            done = torch.tensor(data=np.logical_or(terminated, truncated)).to(device=DEVICE)
             obs = torch.tensor(data=obs).to(device=DEVICE)
-            rewards[step] = reward
+            rewards[step] = torch.tensor(data=reward).to(device=DEVICE)
+
+            # print(info)
+            # NOTE: `VecEnv` specific
+            if len(info.items()) > 0:
+                for i in range(NUM_ENVS):
+                    if info["_episode"][i] and "episode" in info:
+                        episodic_return = info["episode"]["r"][i]
+                        episodic_length = info["episode"]["l"][i]
+                        time = info["episode"]["t"][i]
+
+                        writer.add_scalar(
+                            tag="charts/episodic_return",
+                            scalar_value=episodic_return, global_step=global_step,
+                        )
+                        writer.add_scalar(
+                            tag="charts/episodic_length",
+                            scalar_value=episodic_length, global_step=global_step,
+                        )
+                        pbar.set_description(
+                            desc=f"{global_step}: "
+                            f"last episodic return: {episodic_return:.2f}, "
+                            f"current learning rate: {optimizer.param_groups[0]['lr']:.5f}"
+                        )
 
         # Bootstrap next value if not done
         with torch.no_grad():
-            # TODO: This will become a problem when dealing with vectorized envs or MARL
-            next_value = agent.value(obs) if not done else torch.zeros_like(value)
+            next_value = agent.value(obs).reshape(1, -1)
+            next_value = torch.where(done, next_value, torch.zeros_like(next_value))
         next_values = torch.cat(tensors=(values[1:], next_value))
         next_dones = torch.cat(tensors=(dones[1:], done.unsqueeze(dim=0)))
 
@@ -376,10 +428,11 @@ if __name__ == "__main__":
         )
 
         # Flatten batch data
+        # From here on out the behaviour is equivalent to the single environment case
         # NOTE: Only requried for vectorized environments, I think
-        batch_observations = observations.reshape((-1,) + env.observation_space.shape)
+        batch_observations = observations.reshape((-1, *observation_space.shape))
         batch_logprobs = logprobs.reshape(-1)
-        batch_actions = actions.reshape((-1,) + env.action_space.shape)
+        batch_actions = actions.reshape((-1, *action_space.shape))
         batch_advantages = advantages.reshape(-1)
         batch_returns = returns.reshape(-1)
         batch_values = values.reshape(-1)
@@ -414,6 +467,7 @@ if __name__ == "__main__":
 
                 optimizer.zero_grad()
                 loss.backward()
+                # Clip gradient for small performance boost (Andrychowicz et al. (2021))
                 torch.nn.utils.clip_grad_norm_(
                     parameters=agent.parameters(),
                     max_norm=MAX_GRAD_NORM,
@@ -423,13 +477,30 @@ if __name__ == "__main__":
             epoch_losses[epoch] = torch.tensor(data=batch_losses).mean()
 
         avg_epoch_loss = epoch_losses.mean()
-
-        # Evaluation
-        stats = evaluate(agent=agent, env_id=env_id)
-        pbar.set_description(
-            desc=f"{global_step}: avg epoch loss: {avg_epoch_loss.mean():.2f}, "
-            f"avg episode return: {stats['avg_return']:.2f}, "
-            f"current learning rate: {optimizer.param_groups[0]['lr']:.5f}"
+        writer.add_scalar(
+            tag="charts/learning_rate",
+            scalar_value=optimizer.param_groups[0]["lr"],
+            global_step=global_step,
+        )
+        writer.add_scalar(
+            tag="losses/total_loss",
+            scalar_value=avg_epoch_loss,
+            global_step=global_step,
+        )
+        writer.add_scalar(
+            tag="losses/old_approx_kl",
+            scalar_value=stats["old_approx_kl"],
+            global_step=global_step,
+        )
+        writer.add_scalar(
+            tag="losses/approx_kl",
+            scalar_value=stats["approx_kl"],
+            global_step=global_step,
+        )
+        writer.add_scalar(
+            tag="losses/fraction_clipped",
+            scalar_value=stats["fraction_clipped"],
+            global_step=global_step,
         )
 
     # Final Evaluation
@@ -440,5 +511,8 @@ if __name__ == "__main__":
         f"Avg episode length: {stats['avg_length']:.2f} \n"
     )
 
-    env.close()
+    # Save model
+    torch.save(obj=agent.state_dict(), f=f"models/{EXPERIMENT_NAME}/agent.pt")
+
+    envs.close()
     exit()

@@ -1,5 +1,20 @@
 # Reinforcement Learning
 
+## Notes
+
+- $TD(\lambda)$ return estimation: $V_{targ} = est_returns = adv + values$
+- Observation normalisation and clipping can help performance
+- Reward Scaling and clipping can help performance
+
+## TODO:
+
+Look into: 
+
+- Clip range annealing
+- Parallellized gradient updates
+- Early stopping
+- Invalid action masking
+
 ## References
 
 - [Proximal Policy Optimization Algorithms](https://arxiv.org/abs/1707.06347):

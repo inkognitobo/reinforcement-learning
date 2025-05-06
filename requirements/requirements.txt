@@ -1,5 +1,8 @@
 torch
 #
+tensorboard
+standard-imghdr
+#
 swig
 gymnasium
 gymnasium[classic-control]
