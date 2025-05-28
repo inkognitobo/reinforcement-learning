@@ -1,4 +1,0 @@
-python-lsp-server
-python-lsp-server[all]
-pytest
--r requirements.txt
