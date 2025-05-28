@@ -1,5 +1,13 @@
 # Reinforcement Learning
 
+## Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+poetry install --with dev
+```
+
 ## Notes
 
 - $TD(\lambda)$ return estimation: $V_{targ} = est_returns = adv + values$
@@ -12,7 +20,7 @@ Look into:
 
 - Clip range annealing
 - Parallellized gradient updates
-- Early stopping
+- Early stopping (based on change in KL divergence)
 - Invalid action masking
 
 ## References

@@ -1,0 +1,29 @@
+[project]
+name = "rl"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "inkognitobo",email = "tobias@inkognitobo.dev"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dynamic = [ "dependencies" ]
+
+[tool.poetry.dependencies]
+torch = "*"
+tensorboard = "*"
+standard-imghdr = "*"
+swig = "*"
+gymnasium = { version = "*", extras = ["classic-control", "toy-text", "mujoco", "atari"]}
+ale-py = "*"
+tqdm = "*"
+
+[tool.poetry.group.dev]
+optional = true
+[tool.poetry.group.dev.dependencies]
+python-lsp-server = { version = "*", extras = ["all"] }
+pytest = "*"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

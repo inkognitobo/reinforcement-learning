@@ -10,9 +10,9 @@ from typing import Any
 
 from tqdm import tqdm
 
-from src.nn.utils import layer_init
-from src.utils import DEVICE
-from src.utils.types import Device
+from rl.nn.utils import layer_init
+from rl.utils import DEVICE
+from rl.utils.types import Device
 
 
 class Agent(torch.nn.Module):
