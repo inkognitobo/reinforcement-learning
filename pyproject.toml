@@ -14,9 +14,11 @@ torch = "*"
 tensorboard = "*"
 standard-imghdr = "*"
 swig = "*"
-gymnasium = { version = "*", extras = ["classic-control", "toy-text", "mujoco", "atari"]}
+gymnasium = {extras = ["all"], version = "^1.1.1"}
 ale-py = "*"
 tqdm = "*"
+popgym = "^1.0.6"
+moviepy = "^2.2.1"
 
 [tool.poetry.group.dev]
 optional = true

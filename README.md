@@ -10,7 +10,6 @@ poetry install --with dev
 
 ## Notes
 
-- $TD(\lambda)$ return estimation: $V_{targ} = est_returns = adv + values$
 - Observation normalisation and clipping can help performance
 - Reward Scaling and clipping can help performance
 
@@ -20,8 +19,8 @@ Look into:
 
 - Clip range annealing
 - Parallellized gradient updates
-- Early stopping (based on change in KL divergence)
 - Invalid action masking
+- Hyperparameter search
 
 ## References
 
