@@ -336,6 +336,7 @@ class ClippedPPOLoss(torch.nn.Module):
             "old_approx_kl": old_approx_kl,
             "approx_kl": approx_kl,
             "clipfracs": clipfracs,
+            "ratio": ratio,
             "policy_loss": -pg,
             "value_loss": v_loss,
             "entropy_bonus": entropy_bonus,
@@ -550,9 +551,11 @@ def main():
         writer.add_scalar("losses/policy_loss", stats["policy_loss"].item(), global_step)
         writer.add_scalar("losses/value_loss", stats["value_loss"].item(), global_step)
         writer.add_scalar("losses/entropy", stats["entropy_bonus"].item(), global_step)
+        writer.add_scalar("losses/mean_advantage", batch_advantages.mean(), global_step)
         writer.add_scalar("losses/old_approx_kl", stats["old_approx_kl"].item(), global_step)
         writer.add_scalar("losses/approx_kl", stats["approx_kl"].item(), global_step)
         writer.add_scalar("losses/clipfrac", clipfracs.mean(), global_step)
+        writer.add_scalar("losses/ratio", stats["ratio"].mean(), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
